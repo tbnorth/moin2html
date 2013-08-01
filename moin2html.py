@@ -28,7 +28,7 @@ from lxml import etree
 if len(sys.argv) == 4:
     SITE, URL, OUTDIR = sys.argv[1:]
 else:
-    print __doc__
+    print(__doc__)
     exit(10)
 
 HTML_parser = etree.HTMLParser()
