@@ -1,7 +1,7 @@
 """
 moin2html.py - mirror a moin site
 
-Usage: python moin2html.py <site> <url> <outdir>
+Usage: python moin2html.py <site> <url> <outdir> [<realm> <uri> <user> <pass>]
 
 eg. python moin2html.py http://example.com /wiki/somewiki/Main wikidump
 
@@ -25,11 +25,23 @@ else:
 
 from lxml import etree
 
-if len(sys.argv) == 4:
-    SITE, URL, OUTDIR = sys.argv[1:]
+if len(sys.argv) >= 4:
+    SITE, URL, OUTDIR = sys.argv[1:4]
 else:
     print(__doc__)
     exit(10)
+
+def init_urllib():
+    if len(sys.argv) > 4:
+        realm, uri, user, passwd = sys.argv[4:]
+        auth_handler = urllib.HTTPBasicAuthHandler()
+        auth_handler.add_password(realm=realm,
+                                  uri=uri,
+                                  user=user,
+                                  passwd=passwd)
+        opener = urllib.build_opener(auth_handler)
+        urllib.install_opener(opener)
+init_urllib()
 
 HTML_parser = etree.HTMLParser()
 
@@ -40,11 +52,9 @@ TIMESTAMP = time.asctime()
 #?action=AttachFile&do=get&target=sitemap.tdraw
 #?action=AttachFile&do=view&target=CRP2007.zip
 re_attach_page = re.compile(r"\?action=AttachFile$")
-# re_attach_link = re.compile(
-#     r"\?action=AttachFile&do=(get|view)&target=(?P<filename>.*)$")
-# download the get version, not the view version
 re_attach_link = re.compile(
-    r"\?action=AttachFile&do=get&target=(?P<filename>.*)$")
+    r"\?action=AttachFile&do=(get|view)&target=(?P<filename>.*)$")
+# (but download the get version, not the view version)
 
 # load URL cache to avoid re-getting pages
 json_state_file = "url_cache.json"
@@ -59,14 +69,28 @@ if 0:  # clear failed urls
 def get_url(url):
     
     if url not in url_cache['url']:
-        try:
-            url_cache['url'][url] = urllib.urlopen(url).read()
-        except urllib.HTTPError as err:
-            print(err)
-            if err.code in (404, 500):
-                url_cache['url'][url] = None
-            else:
-                raise
+        
+        # 401 is "basic auth failed", but on the second try it just
+        # 404s, so try again on 401, but only once, because if it's
+        # failing continuously we should bail (i.e. if the URL's exists
+        # but the auth. info. is wrong).
+        for attempt in range(2):
+            try:
+                url_cache['url'][url] = urllib.urlopen(url).read()
+                break
+            except urllib.HTTPError as err:
+                print(err)
+                if err.code == 401:
+                    # this is needed to get 404 on the next attempt,
+                    # instead of 401 again.
+                    reload(urllib)
+                    init_urllib()
+                    continue
+                elif err.code in (404, 500):
+                    url_cache['url'][url] = None
+                    break
+                else:
+                    raise
             
     return url_cache['url'][url]
 
@@ -158,11 +182,15 @@ def process_pages(todo, done):
 
         if attach:
             filename = attach.groupdict()['filename']
-            data_url = href_url
+            data_url = href_url.replace('&do=view&', '&do=get&')
             href_url = href_url.split('?', 1)[0]  # remove ?action=Attach...
             href_url += '/_attachments/%s' % filename
-            new_url = os.path.relpath(href_url, '/dummy/'+URL)
             
+            if not re_attach_page.search(URL):
+                new_url = os.path.relpath(href_url, URL)
+            else:
+                new_url = os.path.relpath(href_url, '/dummy/'+URL)
+                
             if data_url not in done:
                 use_url = SITE+data_url
                 print('GET %s %s' % (filename, use_url))
