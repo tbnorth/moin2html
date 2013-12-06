@@ -1,6 +1,6 @@
 Quick hack to dump a moin wiki to static HTML with attachments.
 
-You may need to turn of surge protection with::
+You may need to turn off surge protection with::
     
     surge_action_limits = None # disable surge protection
 
